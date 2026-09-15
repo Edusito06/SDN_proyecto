@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+
+jobs:
+  calidad:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Instalar dependencias
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pytest
+          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+      - name: Lint
+        run: ruff check src tests || true
+      - name: Pruebas unitarias
+        run: pytest tests/unit -v
+      - name: Verificar que no se subieron credenciales
+        run: |
+          if git ls-files | grep -Ei '\.(ovpn|pem|key|p12)$|credencial|secret'; then
+            echo "Se detectaron archivos sensibles en el repositorio."
+            exit 1
+          fi
+          echo "Sin archivos sensibles."

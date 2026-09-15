@@ -1,0 +1,35 @@
+# Nunca subir credenciales ni acceso al laboratorio
+*.ovpn
+*.pem
+*.key
+*.crt
+*.p12
+.env
+.env.*
+credenciales*
+secrets*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.mypy_cache/
+
+# Resultados de laboratorio y capturas
+*.pcap
+*.pcapng
+resultados/raw/
+*.log
+
+# PDFs generados a partir de Markdown (el fuente es el .md)
+docs/**/*.pdf
+!entregables/**/*.pdf
+
+# Sistema y editores
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
