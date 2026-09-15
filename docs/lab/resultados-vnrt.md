@@ -439,6 +439,90 @@ modifica, por si el VNRT se reaprovisiona.
   (cargar la app, crear contextos, instanciar y levantar el `OpenFlowController`).
   La clase base de las apps es `app_manager.OSKenApp`.
 
+### 4.1 App de medición y montaje
+
+- App: `tools/bench_packetin.py` (`PacketInBench`, subclase de `OSKenApp`, OF1.3).
+  Cuenta Packet-In, imprime PPS por segundo, mide CPU propia leyendo
+  `/proc/self/stat`, y cronometra la latencia Packet-In→FLOW_MOD confirmado
+  enviando, cada 200 Packet-In, un `FLOW_MOD` no-op (matchea un `udp_dst` que el
+  generador nunca usa, sin acciones = drop, no toca el tráfico) seguido de un
+  `OFPBarrierRequest`; la latencia es el RTT hasta el `BarrierReply`. La **única**
+  regla de reenvío que instala es el table-miss → CONTROLLER (necesario en OF1.3).
+- Lanzador: `tools/osken_run.py` (por la salvedad de empaquetado de 4.0).
+- Canal de control: el controlador escucha en `0.0.0.0:6653`. Se conectó **`sw2`**
+  (dpid `00001a749039894a`, con `h1` y `h2` colgando) por la **red de gestión**:
+  `sudo ovs-vsctl set-controller sw2 tcp:192.168.0.10:6653`. Handshake OK, el
+  table-miss quedó instalado en sw2. Esto confirma que **el canal OpenFlow va por
+  la red de gestión (192.168.0.0/24), no por la red 172.16.0.0/24** (los switches
+  no alcanzan `172.16.0.1` por el plano de datos sin flujos). Resuelve en parte el
+  enigma de la IP duplicada 172.16.0.1: esa red no se usa para el canal de control.
+- Generador de carga: `tools/loadgen_packetin.py`, stdlib pura (sin root ni
+  scapy, que no se pudieron usar porque los hosts no tienen sudo sin contraseña).
+  Envía UDP a la dirección de broadcast del plano de datos (`10.0.0.255`); cada
+  trama hace table-miss → un Packet-In. Corre directo en la shell del host (sin
+  `ip netns`).
+
+### 4.2 y 4.3 Medición: rampa de carga y saturación
+
+Rampa de tasa objetivo desde `h1` (8 s por punto), más ilimitado desde `h1` y
+desde `h1`+`h2` en paralelo para forzar saturación. Cada línea del monitor
+reporta PPS del segundo, CPU del proceso (base 100% = un núcleo; os-ken es
+monohilo por eventlet, el nodo tiene 2 vCPU) y la distribución acumulada de
+latencia Packet-In→FLOW_MOD.
+
+| Tasa ofrecida | PPS procesados (sostenido) | Pérdida | CPU controlador | Latencia mediana | Latencia p95 |
+|---|---|---|---|---|---|
+| 100 pps | ~100 | 0 | ~4 % | 1.45 ms | 1.45 ms |
+| 500 pps | ~500 | 0 | ~17-20 % | ~1.2 ms | ~1.56 ms |
+| 1 000 pps | ~1 000 | 0 | ~32-34 % | ~0.95 ms | ~1.5 ms |
+| 2 000 pps | ~2 000 | 0 | ~47-52 % | ~0.91 ms | ~1.5 ms |
+| 4 000 pps | ~4 000 | 0 | ~53-67 % | ~0.87 ms | ~1.6 ms |
+| ilimitado (h1 ~93k pps ofrecidos) | **~11 000-11 700 (techo)** | sí, masiva | **~110-112 % (núcleo saturado)** | ~0.9-1.2 ms | **175 → 540 → 1290 → 4100 ms** |
+| ilimitado (h1+h2 ~185k pps ofrecidos) | ~11 000 (mismo techo) | sí, masiva | ~110 % | **sube a ~2650 ms** | ~4130 ms |
+
+**Punto de saturación observado:** ~**11 000 Packet-In/s sostenidos**. En ese
+punto un núcleo queda al 100 % (CPU del proceso ~110 %), el switch/kernel empieza
+a **descartar** Packet-In (se ofrecieron 93 000 pps y solo se procesaron ~11 000),
+y la **cola de Packet-In se acumula**: la latencia p95 se dispara de ~1.6 ms a
+>4 s. La mediana se mantiene baja hasta que la saturación es total (h1+h2), donde
+también colapsa a segundos.
+
+**Comparación con los compromisos del AVZ02:**
+
+| Métrica | Compromiso AVZ02 | Medido | Margen |
+|---|---|---|---|
+| Latencia de detección (p95 PktIn→FlowMod) | ≤ 500 ms | 1.45 ms @ 100 flujos/s; se mantiene <2 ms hasta ~4 000 pps | **holgadísimo** por debajo de saturación |
+| CPU del controlador bajo 100 flujos/s | ≤ 60 % | ~4 % | **holgadísimo** |
+| (referencia) CPU al 60 % | — | se cruza cerca de ~4 000-5 000 pps | — |
+| (referencia) p95 cruza 500 ms | — | solo al saturar (~11 000 pps) | — |
+
+**Lectura para el HLD de R3:** el controlador aguanta ~11 000 Packet-In/s antes
+de degradarse, y hasta ~4 000 pps se mantiene bajo el 60 % de CPU con latencia
+sub-2 ms. Eso está **muy por encima** de los 100 flujos/s comprometidos: hay
+margen amplio. Pero define el techo: si la detección de R3 se basa en contar
+Packet-In en el controlador, por encima de ~11 000 pps se pierden eventos y la
+latencia se vuelve inservible. Un atacante que genere un flood de Packet-In
+(p. ej. `hping3 --flood`, Fase 5) puede empujar hacia esa zona; el diseño de R3
+debe contemplar rate-limiting en el plano de datos (los meters de la Fase 2, que
+sí están soportados) para no depender solo del plano de control bajo ataque.
+
+### 4.4 Comparación con otra alternativa
+
+Pendiente. No se instaló un segundo controlador (p. ej. una app equivalente en
+otro runtime) ni `cbench` (no está en el entorno; instalarlo requiere `apt`, que
+en `controller` pide contraseña). Para "elección fundamentada" del ADR, la
+comparación puede completarse citando cifras publicadas de Ryu/os-ken vs. otros
+controladores, **dejando claro que son de la literatura y no medidas aquí**. No
+se presenta ningún número inventado.
+
+### 4.5 Limpieza
+
+`sudo ovs-vsctl del-controller sw2` y `del-flows sw2` ejecutados. `sw2` quedó sin
+controlador, en `[OpenFlow13]` (estado del Paso 0) y con 0 flujos. El controlador
+os-ken se detuvo (sesión tmux cerrada, puertos 6653/6633 liberados). El venv
+`~/ryu-venv` y los scripts en `~/bench` del nodo `controller` quedan instalados
+para futuras corridas (reversible con `rm -rf`).
+
 ## Fase 5. Banco de ataques
 
 **No ejecutada.** Además, tal como está escrito el runbook no se puede
@@ -461,19 +545,32 @@ instalado.
    namespaces (`ip netns`) en este VNRT, cada host es una VM real con su propio
    puerto SSH. Hay que reescribir los comandos de ataque sin `ip netns exec`.
 4. **Ningún nodo trae herramientas de prueba/ataque preinstaladas**
-   (`nmap`, `hping3`, `scapy`, `cbench`, ni `pip3`). Fases 4 y 5 están
-   bloqueadas hasta pedir permiso e instalar lo mínimo necesario.
+   (`nmap`, `hping3`, `scapy`, `cbench`, ni `pip3`). La Fase 4 se resolvió sin
+   ellas (generador stdlib propio); la Fase 5 sigue bloqueada hasta instalar
+   `nmap`/`hping3`/`scapy` en el host atacante. Además **los hosts no tienen sudo
+   sin contraseña**, así que la generación de tráfico de la Fase 4 se hizo sin
+   root (broadcast UDP), y la Fase 5 necesitará resolver el tema de privilegios
+   para las herramientas que piden raw sockets.
 5. **`controller:ens4` y el puerto interno del bridge `sw1` comparten la misma
-   IP (172.16.0.1/24).** No se pudo determinar si es una duplicación real de
-   direcciones en el mismo segmento o una convención de direccionamiento
-   punto a punto sin impacto — el ping entre ambos siempre se resuelve local
-   porque comparten IP, así que no hay forma de probarlo desde dentro de las
-   VMs. Consultar con el staff del curso o revisar la plantilla de
-   aprovisionamiento del VNRT.
-6. **No hay Ryu (ni ningún otro controlador SDN) instalado en `controller`.**
-   Bloquea la fase 4 hasta instalarlo con permiso.
+   IP (172.16.0.1/24).** Parcialmente aclarado en la Fase 4: **el canal OpenFlow
+   controlador↔switch va por la red de gestión (192.168.0.0/24), no por
+   172.16.0.0/24**, que no se usa para el control (los switches ni siquiera
+   alcanzan 172.16.0.1 por el plano de datos sin flujos). La IP duplicada en
+   172.16 no afecta el canal de control. Queda por confirmar con el staff para
+   qué se pensaba usar esa red y si la duplicación es intencional.
+6. ~~**No hay Ryu instalado en `controller`.**~~ **RESUELTO en la corrida 3:**
+   Ryu no instala en Python 3.12, quedó **os-ken 4.2.2** en un venv. Implicación
+   de diseño: el código del proyecto usa imports `os_ken.*` y un lanzador propio
+   (`tools/osken_run.py`). Ver Fase 4.0.
 7. **No se pudo determinar el emparejamiento exacto sw1–sw2 y sw1–sw3** (qué
-   puerto de `sw1` va a cuál). Ver detalle en "Mapa real de topología".
+   puerto de `sw1` va a cuál). Sigue pendiente; se resolverá con
+   `os_ken.topology` (descubrimiento por LLDP) conectando los 3 switches, o con
+   un controlador de reenvío real. Ver detalle en "Mapa real de topología".
+8. **Techo del plano de control medido: ~11 000 Packet-In/s** (un núcleo al
+   100 %). Muy por encima de los 100 flujos/s comprometidos, pero define el
+   límite bajo ataque de flood: R3 no debe depender solo de contar Packet-In en
+   el controlador; conviene rate-limiting en el plano de datos con meters (que la
+   Fase 2 confirmó soportados). Ver Fase 4.2/4.3.
 
 ## Pruebas que no se pudieron ejecutar
 
@@ -485,7 +582,8 @@ instalado.
 | Emparejamiento exacto de puertos sw1↔sw2 y sw1↔sw3 | Aún pendiente: sin controlador conectado ni reglas, el fdb no aprende (`fail_mode=secure`, 0 flujos). Se resolverá en la Fase 4 con el controlador conectado, o instalando LLDP |
 | LLDP como método de mapeo de adyacencias | `lldpd`/`lldpcli` no están instalados en ningún nodo |
 | Latencia RTT según tamaño de tabla (2.4) | `bench0` no tiene hosts conectados; se medirá mejor en la Fase 4 con tráfico real |
-| Versión de Ryu, `pip3 list \| grep ryu` | Ryu y pip3 no están instalados en `controller`; se instala en la Fase 4 |
-| `cbench` | No está instalado en ningún nodo |
-| Fase 4 (cuello de botella del controlador) | Pendiente: requiere instalar Ryu primero (Fase 4.0). No ejecutada en corrida 2 por indicación de detenerse tras la Fase 2 |
-| Fase 5 (banco de ataques) | Pendiente: requiere instalar `nmap`/`hping3`/`scapy` en el host atacante (Fase 5.0) |
+| ~~Instalar el controlador~~ | RESUELTO en corrida 3: os-ken 4.2.2 en venv (Ryu no instala en Py3.12) |
+| ~~Fase 4 (cuello de botella del controlador)~~ | RESUELTO en corrida 3: ejecutada. Falta solo 4.4 (comparación con otro controlador/`cbench`) |
+| Comparación de controladores / `cbench` (Fase 4.4) | Pendiente: `cbench` no está instalado (requiere `apt`, que en `controller` pide contraseña). Se completará con cifras de la literatura, marcadas como tales |
+| Emparejamiento exacto sw1↔sw2 y sw1↔sw3 | Sigue pendiente: el bench no reenvía tráfico entre switches, así que el fdb no aprende. Se resolverá con la app de descubrimiento de topología de os-ken (`os_ken.topology`, LLDP por packet-out) conectando los 3 switches, o con un controlador de reenvío real |
+| Fase 5 (banco de ataques) | Pendiente: requiere instalar `nmap`/`hping3`/`scapy` en el host atacante (Fase 5.0); los hosts no tienen sudo sin contraseña |
