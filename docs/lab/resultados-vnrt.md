@@ -10,11 +10,14 @@ número estimado.
   Eduardo en esta sesión), reenvío de puertos por nodo según `acceso-vnrt.md`.
   Autenticación por llave dedicada `vnrt_ed25519` instalada en los 8 nodos durante
   esta sesión (antes solo había contraseña).
-- Commit del repo en el momento de medir: `28c3166` (28c31663c4edd21febefea82c60fbeeda165fb63)
+- Commit del repo en el momento de medir: `28c3166` (fases 1 y 3);
+  continuación (Paso 0 y Fase 2) sobre `43d7894`.
 
-**Alcance de esta corrida: solo fases 1 y 3 (lectura), a pedido explícito.** Las
-fases 2, 4 y 5 (que escriben `bench0`, miden Packet-In y lanzan ataques) quedan
-pendientes de una sesión aparte.
+**Historial de corridas:**
+- Corrida 1 (2026-09-15): fases 1 y 3, solo lectura.
+- Corrida 2 (2026-09-15): Paso 0 (habilitar OF1.3) y Fase 2 (capacidad del
+  plano de datos), siguiendo `01-preparacion-y-pruebas.md`, con luz verde de
+  Eduardo para los cambios de escritura de ese runbook. Fases 4 y 5 pendientes.
 
 ## Fase 1. Inventario
 
@@ -258,11 +261,49 @@ como está aprovisionado hoy. La decisión formal de cerrar el ADR 0001 con esto
 le corresponde a Eduardo como arquitecto de solución, no se edita el ADR en
 esta corrida.
 
-## Fase 2. Capacidad del plano de datos
+## Paso 0. Habilitar OpenFlow 1.3 en los tres switches (corrida 2)
 
-**No ejecutada en esta corrida** (se pidió empezar solo por fases 1 y 3, de
-solo lectura). Pendiente para una sesión que cree y limpie el bridge temporal
-`bench0`.
+Cambio de escritura autorizado por Eduardo, siguiendo `01-preparacion-y-pruebas.md`.
+Resuelve el hallazgo crítico de la corrida 1 (los bridges solo negociaban OF1.0).
+
+Respaldo previo (regla 3): en los 3 switches, `protocols=[OpenFlow10]` y
+`dump-flows` = 0 antes del cambio. Guardado en el scratchpad de la sesión.
+
+Comando aplicado en cada switch (`sw1`, `sw2`, `sw3`), vía SSH con `sudo`:
+
+```bash
+sudo ovs-vsctl set bridge <swN> protocols=OpenFlow13
+sudo ovs-vsctl get bridge <swN> protocols      # -> [OpenFlow13]
+sudo ovs-ofctl -O OpenFlow13 show <swN>         # ahora responde
+```
+
+Resultado: en los 3, `protocols` pasó a `[OpenFlow13]` y `ovs-ofctl -O
+OpenFlow13 show` ya completa el handshake (antes fallaba con "version
+negotiation failed"). **`dump-flows` sigue en 0** en los 3 tras el cambio: no se
+instaló ninguna regla, solo se cambió la versión negociada. El cambio es
+reversible con `set bridge <swN> protocols=OpenFlow10`.
+
+Datos nuevos que este cambio deja ver (`ovs-ofctl -O OpenFlow13 show`):
+
+| Switch | dpid | n_tables | Puertos OpenFlow (nº → interfaz) |
+|---|---|---|---|
+| sw1 | `0000a223f2c04547` | 254 | 1→ens4 (controller), 2→ens5, 3→ens6, LOCAL→sw1 |
+| sw2 | `00001a749039894a` | 254 | 1→ens4, 2→ens5 (h1), 3→ens6 (h2), LOCAL→sw2 |
+| sw3 | `0000ca272d265744` | 254 | 1→ens6 (h4), 2→ens5 (h3), 3→ens4, LOCAL→sw3 |
+
+Notas:
+- **254 tablas** por bridge: el pipeline multitabla del contrato
+  (`docs/contratos/tablas-openflow.md`) cabe de sobra.
+- En `sw3` la numeración OpenFlow **no** sigue el orden de `ensN`: puerto OF 1 =
+  ens6, 3 = ens4. Al escribir reglas hay que usar el número OpenFlow, no asumir
+  que `ens4`=1. Los `dpid` de arriba son los que reportará cada switch al
+  conectarse al controlador en la fase 4.
+
+## Fase 2. Capacidad del plano de datos (corrida 2)
+
+Ejecutada sobre un bridge temporal `bench0` creado en `sw1`, aislado de la
+topología real (sin puertos físicos enclavados). Se creó, se midió y se eliminó
+en la misma corrida; ver limpieza al final de la sección.
 
 ## Fase 4. Cuello de botella del controlador
 
@@ -279,12 +320,10 @@ instalado.
 
 ## Hallazgos que afectan el diseño
 
-1. **Los tres bridges reales (`sw1`, `sw2`, `sw3`) están configurados solo con
-   `protocols=[OpenFlow10]`.** Un controlador OpenFlow 1.3 no puede conectarse
-   tal cual están hoy. Bloquea directamente el HLD de R1/R2/R3 y el contrato de
-   tablas, que asumen OF1.3. Se necesita `ovs-vsctl set bridge <br>
-   protocols=OpenFlow13` en los 3 — cambio de escritura, no aplicado en esta
-   corrida, a decidir junto con el ADR 0001.
+1. ~~**Los tres bridges reales (`sw1`, `sw2`, `sw3`) están configurados solo con
+   `protocols=[OpenFlow10]`.**~~ **RESUELTO en la corrida 2 (Paso 0):** los 3
+   bridges quedaron en `protocols=[OpenFlow13]` y ya completan el handshake OF1.3.
+   El cambio es reversible. Ver la sección "Paso 0".
 2. **El diagrama preliminar de topología de `acceso-vnrt.md` estaba
    parcialmente equivocado.** El switch central es `sw1` (conecta a controller,
    sw2 y sw3), no `sw2`. `h2` cuelga de `sw2`, no de `sw1`. Se corrigió la tabla
