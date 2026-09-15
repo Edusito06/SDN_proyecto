@@ -10,4 +10,4 @@ Formato: contexto, opciones evaluadas, decisión, consecuencias.
 
 | ADR | Tema | Estado |
 |---|---|---|
-| 0001 | Controlador y plano de datos: Ryu/OVS frente a P4/Tofino | Pendiente |
+| 0001 | Controlador y plano de datos: Ryu/OVS frente a P4/Tofino | Aceptado (Ryu/OVS) |

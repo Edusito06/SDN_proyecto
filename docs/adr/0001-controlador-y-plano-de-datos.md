@@ -1,81 +1,85 @@
 # ADR 0001 — Controlador y plano de datos
 
-- Estado: **PENDIENTE DE DECISIÓN**
-- Fecha: por definir
-- Decide: Eduardo Rodas (arquitecto), validado con el coach Fernando Guzmán
+- Estado: **ACEPTADO**
+- Fecha: 2026-09-15
+- Decide: Eduardo Rodas (arquitecto), pendiente de comentar en la asesoría del coach
+- Sustento: reconocimiento del VNRT, fases 1 y 3 (`docs/lab/resultados-vnrt.md`)
 
 ## Contexto
 
-Hay una inconsistencia entre los avances ya entregados que hay que resolver
-antes de escribir el documento de arquitectura del Ex1.
+Había una inconsistencia entre los avances entregados. El AVZ01 planteaba
+implementar R3 con P4 sobre Intel Tofino. El AVZ02 y el AVZ03 describían
+controlador Ryu sobre Open vSwitch con OpenFlow. Son dos arquitecturas distintas,
+y la rúbrica del Ex1 evalúa "elección de controlador fundamentada" con peso 8,
+así que la decisión no podía quedar ambigua.
 
-El **AVZ01** dice que el codificador "desarrolla los programas P4 para el entorno
-NRT/BNRT sobre Intel Tofino" y que la solución de R3 "debe operar en el entorno
-Intel Tofino con lenguaje P4".
+Para no decidir por preferencia, se ejecutó un reconocimiento del entorno VNRT
+(runbook `docs/lab/00-reconocimiento-vnrt.md`). Los datos relevantes:
 
-El **AVZ02** y el **AVZ03** describen otra cosa: controlador Ryu, switches Open
-vSwitch, OpenFlow sobre TCP como southbound, y los tres módulos corriendo como
-aplicaciones del controlador.
+- No existe ningún componente de la cadena P4 en ninguno de los 8 nodos: ni
+  compilador `p4c`, ni switch de software `bmv2`/`simple_switch`, ni
+  `p4runtime-shell`, ni rastro de hardware o modelo Tofino
+  (`find / -iname '*tofino*'` vacío en los 8 nodos).
+- El plano de datos ya está montado sobre Open vSwitch 3.3.9 en los tres
+  switches, con la topología en estrella `sw1` central descrita en los
+  resultados.
+- Los bridges soportan OpenFlow 1.3 y superiores a nivel de binario; hoy están
+  configurados en OpenFlow 1.0, lo que se corrige con una línea de `ovs-vsctl`.
 
-Son dos arquitecturas distintas, no dos capas de la misma. La rúbrica del Ex1
-evalúa "elección de controlador fundamentada" y el jurado va a preguntar por
-esto, así que no se puede dejar ambiguo.
+## Decisión
 
-## Opciones
+**Se adopta Ryu sobre Open vSwitch con OpenFlow 1.3 para toda la solución (R1, R2
+y R3) del Ex1.** La vía P4/Tofino queda descartada por no estar disponible en el
+entorno, y se documenta como alternativa evaluada.
 
-### A. Ryu sobre Open vSwitch, todo en el plano de control
+## Justificación
 
-La detección de R3 vive en el controlador, que cuenta Packet-In por host y
-decide. Es lo que describen AVZ02 y AVZ03.
+Es una decisión forzada por los datos, no por gusto. La opción P4/Tofino (opción
+B del planteamiento original) es inviable en el VNRT: no hay toolchain P4 ni
+hardware ni modelo de software instalado, y aprovisionarlo excede lo que el
+entorno del curso permite y el calendario del parcial admite. La opción Ryu/OVS
+(opción A) ya está soportada por la infraestructura existente, es lo que el curso
+enseña en los laboratorios, y permite llegar a la demo en vivo de R2 durante el
+parcial, que es un entregable obligatorio con fecha.
 
-A favor: es lo que el curso enseña en los laboratorios, corre en el VNRT tal como
-está, y el equipo ya tiene la topología levantada. La implementación de R2 para la
-demo del parcial es directa.
+Frente al jurado, esta elección se sostiene con un argumento verificable: se
+evaluó la alternativa programable en el plano de datos y se descartó por
+disponibilidad del entorno, dejándola como evolución posible para el Ex2 si el
+laboratorio habilitara `bmv2` o acceso a Tofino.
 
-En contra: la detección depende de que los paquetes suban al controlador, lo que
-mete latencia en el primer paquete de cada flujo y pone un techo a la escalabilidad.
-El propio AVZ02 ya reconoce esta limitación.
+## Alternativas evaluadas y descartadas
 
-### B. P4 sobre Intel Tofino, detección en el plano de datos
-
-La detección de R3 se programa en el pipeline del switch. El controlador solo
-recibe reportes y decide políticas.
-
-A favor: detección a velocidad de línea, tiempos de detección muy por debajo de
-los 500 ms comprometidos, y es técnicamente más ambicioso. La rúbrica premia el
-"uso creativo de SDN".
-
-En contra: requiere hardware Tofino o un modelo de software (bmv2), que hay que
-confirmar si está disponible en el VNRT. Es mucho más trabajo y el riesgo de no
-llegar al parcial con algo demostrable es alto.
-
-### C. Híbrido: Ryu como controlador, P4 solo para la detección de R3
-
-Ryu maneja R1 y R2 sobre OVS. R3 se diseña con un plano de datos programable y
-se implementa sobre bmv2 si el entorno lo permite.
-
-A favor: concilia los dos avances ya entregados y permite justificar ante el
-jurado que la elección responde a los requisitos de cada módulo.
-
-En contra: dos planos de datos distintos en la misma topología complica la
-integración y el plan de pruebas.
-
-## Recomendación preliminar
-
-Opción A para el Ex1, dejando la opción C documentada como evolución para el Ex2.
-
-La razón es de riesgo, no de ambición. El parcial pide una demo en vivo del
-despliegue de un slice de R2, y llegar a esa demo con OVS y Ryu es realista en
-las cuatro semanas que quedan. P4 puede entrar en el documento como alternativa
-evaluada y descartada por disponibilidad de entorno, lo que además responde al
-criterio de la rúbrica sobre justificación de decisiones de diseño.
-
-## Qué falta para cerrar esta decisión
-
-1. Confirmar con el coach si el VNRT expone algún switch programable o bmv2.
-2. Acordarlo con Jeanpier, que es quien lo va a implementar.
-3. Actualizar el AVZ04 y el documento de arquitectura con la decisión final.
+| Opción | Descripción | Motivo de descarte |
+|---|---|---|
+| B. P4 sobre Tofino | Detección de R3 en el plano de datos programable | Sin toolchain P4, sin bmv2 y sin Tofino en el VNRT (fase 3). No aprovisionable en el plazo del Ex1 |
+| C. Híbrido Ryu + P4 para R3 | Ryu para R1/R2, plano programable para R3 | Depende de bmv2, que no está presente. Se reconsidera para el Ex2 si el entorno cambia |
 
 ## Consecuencias
 
-Por definir una vez tomada la decisión.
+Positivas: el diseño se apoya en infraestructura ya disponible, el contrato de
+tablas OpenFlow (`docs/contratos/tablas-openflow.md`) es implementable tal cual
+una vez habilitado OF1.3, y el equipo puede concentrarse en la lógica de los
+módulos en vez de montar un plano de datos nuevo.
+
+Trabajo que esta decisión genera, ya identificado en el reconocimiento:
+
+1. Habilitar OpenFlow 1.3 en los tres bridges: `ovs-vsctl set bridge <sw>
+   protocols=OpenFlow13`. Hoy negocian solo OF1.0 y sin esto Ryu no conecta.
+2. Instalar Ryu en el nodo `controller`, que no lo trae.
+3. La detección de R3 vive en el plano de control (contar Packet-In en Ryu), con
+   la latencia del primer paquete que eso implica. El techo de Packet-In por
+   segundo del controlador se medirá en la fase 4 y se llevará al HLD de R3. Si
+   ese techo resultara ajustado frente al compromiso de 500 ms, se documenta como
+   límite conocido, no invalida la decisión.
+
+Limitación honesta a declarar en el documento: OVS es un switch por software y no
+tiene TCAM. El presupuesto de TCAM que pide la rúbrica de R2 se calcula sobre un
+modelo de switch de hardware y se presenta por separado de cualquier medición
+hecha en OVS.
+
+## Revisión
+
+Se reabre este ADR solo si el entorno del curso habilita un plano de datos
+programable antes del Ex2, o si la medición de la fase 4 mostrara que el
+controlador no sostiene la carga objetivo, en cuyo caso se evaluaría un
+controlador distinto (no un plano de datos distinto).
