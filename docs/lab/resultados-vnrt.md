@@ -303,7 +303,93 @@ Notas:
 
 Ejecutada sobre un bridge temporal `bench0` creado en `sw1`, aislado de la
 topología real (sin puertos físicos enclavados). Se creó, se midió y se eliminó
-en la misma corrida; ver limpieza al final de la sección.
+en la misma corrida; ver limpieza al final de la sección. `sw1` se verificó
+intacto después (sigue en OF13, 0 flujos, sus 3 puertos de datos).
+
+### 2.1 Versiones de OpenFlow soportadas
+
+Se habilitaron todas las versiones en `bench0` y se probó el handshake con cada
+una (`ovs-ofctl -O OpenFlowXX show bench0`):
+
+| Versión | Soportada |
+|---|---|
+| OpenFlow 1.0 | Sí |
+| OpenFlow 1.1 | Sí |
+| OpenFlow 1.2 | Sí |
+| OpenFlow 1.3 | Sí |
+| OpenFlow 1.4 | Sí |
+| OpenFlow 1.5 | Sí |
+
+El build de OVS 3.3.9 soporta OF1.0 a 1.5. El pipeline multitabla del contrato
+(`docs/contratos/tablas-openflow.md`) requiere 1.3 y está cubierto de sobra. La
+limitación de la corrida 1 era de configuración por bridge, no del build (se
+resolvió en el Paso 0).
+
+### 2.2 Funciones que necesita el diseño
+
+| Función | Soportada | Evidencia |
+|---|---|---|
+| Múltiples tablas y `goto_table` | **Sí** | `add-flow "table=0,...,goto_table:1"` aceptado; `n_tables=254` |
+| `write_metadata` | **Sí** | misma regla instalada OK: `actions=write_metadata:0x1/0xf,goto_table:1` |
+| **Meters** | **Sí** | `add-meter "meter=1,kbps,band=type=drop,rate=1000"` aceptado; `dump-meters` lo lista |
+| Grupos | **Sí** | `dump-group-features` reporta tipos `all/select/indirect/fast failover`, `max_groups≈0xffffff00` |
+
+**Resultado crítico para R3: los meters SÍ están soportados.** La escalera de
+mitigación de R3 (rate-limit con meters) es implementable tal como está en el
+diseño; **no** hace falta rediseñarla con colas de QoS ni abrir el ADR de
+rediseño que contemplaba el runbook. Los grupos `fast failover` también están
+disponibles por si se necesitan más adelante.
+
+Nota de herramienta (no afecta el diseño): en OVS 3.3.9 el subcomando
+`ovs-ofctl dump-meter-features` devuelve "unknown command". Es un cambio de CLI,
+no una ausencia de soporte: `add-meter` y `dump-meters` funcionan sin problema.
+Para leer las capacidades de meters se usa `dump-meters`/`meter-stats` en esta
+versión.
+
+### 2.3 Escala y velocidad de instalación de reglas
+
+Reglas únicas `priority=100,ip,nw_src=10.a.b.c,actions=drop` cargadas en lote con
+`ovs-ofctl add-flows` sobre `bench0` (OF13). Tiempo con `date +%s.%N`:
+
+| N reglas | Instaladas | Rechazos | Tiempo total | Tiempo por regla |
+|---|---|---|---|---|
+| 100 | 100 | 0 | 0.054 s | 543 µs |
+| 1 000 | 1 000 | 0 | 0.191 s | 191 µs |
+| 5 000 | 5 000 | 0 | 0.721 s | 144 µs |
+| 20 000 | 20 000 | 0 | 2.823 s | 141 µs |
+| 50 000 | 50 000 | 0 | 7.247 s | 144 µs |
+
+**Punto donde empieza a degradarse:** no se observó degradación por regla hasta
+50 000. El costo por regla *baja* de 543 µs (N=100) a ~140 µs y se **estabiliza
+plano** a partir de N≈5 000 (~140-145 µs/regla, ≈7 000 reglas/s). El valor alto
+en N=100 es costo fijo de arranque del lote amortizado sobre pocas reglas, no
+degradación.
+
+**Máximo de reglas aceptado antes de error:** OVS aceptó las 50 000 sin rechazar
+ninguna (`rc=0`, instaladas=N en todos los puntos). No se buscó el techo
+absoluto porque 50 000 ya excede en varios órdenes de magnitud lo que instalaría
+la solución.
+
+Lectura para la rúbrica (escalabilidad): en OVS por software el costo de
+instalación es **lineal y plano por regla**, sin el tope duro de una TCAM de
+hardware. Esto **contrasta** con el presupuesto de TCAM (cálculo analítico para
+hardware, peso 10 en R2): son dos cosas distintas y hay que presentarlas por
+separado, como advierte el runbook. El dato de OVS no sustituye la estimación de
+TCAM; sí sustenta que el prototipo no tiene problema de capacidad de tabla.
+
+### 2.4 Latencia según tamaño de tabla
+
+**No ejecutada.** `bench0` es un bridge aislado sin hosts conectados, y montar
+dos endpoints (puertos internos + direccionamiento) para medir RTT excede lo que
+pide la Fase 2 de `01-preparacion-y-pruebas.md`, que no lista esta sub-prueba. Se
+puede medir mejor en la Fase 4, con el controlador conectado y tráfico real entre
+hosts. Queda anotada como pendiente, no como dato inventado.
+
+### 2.5 Limpieza
+
+`del-flows bench0` + `del-br bench0` ejecutados. Confirmado: `ovs-vsctl list-br`
+solo devuelve `sw1`; `bench0` ya no aparece. Ninguna regla ni bridge de la
+topología real fue tocado.
 
 ## Fase 4. Cuello de botella del controlador
 
@@ -351,12 +437,13 @@ instalado.
 
 | Prueba | Motivo |
 |---|---|
-| `ovs-ofctl -O OpenFlow13 show <br>` en sw1/sw2/sw3 | Los bridges reales solo negocian OpenFlow10; falla la conexión al socket de gestión con "version negotiation failed" |
-| `dump-meter-features` / `dump-group-features` en bridges reales | Mismo problema de versión OpenFlow |
-| Emparejamiento exacto de puertos sw1↔sw2 y sw1↔sw3 | Sin IP en esos puertos, sin LLDP instalado, sin controlador ni reglas que permitan aislar el tráfico de un enlace específico; el fdb no aprende nada porque `fail_mode=secure` con 0 flujos no reenvía nada |
+| ~~`ovs-ofctl -O OpenFlow13 show` en sw1/sw2/sw3~~ | RESUELTO en corrida 2 (Paso 0): los bridges ya negocian OF1.3 |
+| ~~`dump-*-features` de meters/grupos~~ | RESUELTO en corrida 2 (Fase 2): meters y grupos probados OK en `bench0` |
+| ~~Fase 2 (capacidad del plano de datos)~~ | RESUELTO en corrida 2: ejecutada completa sobre `bench0` |
+| Emparejamiento exacto de puertos sw1↔sw2 y sw1↔sw3 | Aún pendiente: sin controlador conectado ni reglas, el fdb no aprende (`fail_mode=secure`, 0 flujos). Se resolverá en la Fase 4 con el controlador conectado, o instalando LLDP |
 | LLDP como método de mapeo de adyacencias | `lldpd`/`lldpcli` no están instalados en ningún nodo |
-| Versión de Ryu, `pip3 list \| grep ryu` | Ryu y pip3 no están instalados en `controller` |
+| Latencia RTT según tamaño de tabla (2.4) | `bench0` no tiene hosts conectados; se medirá mejor en la Fase 4 con tráfico real |
+| Versión de Ryu, `pip3 list \| grep ryu` | Ryu y pip3 no están instalados en `controller`; se instala en la Fase 4 |
 | `cbench` | No está instalado en ningún nodo |
-| Fase 2 completa (capacidad del plano de datos) | No se ejecutó en esta corrida por alcance (solo fases 1 y 3) |
-| Fase 4 completa (cuello de botella del controlador) | No se ejecutó por alcance, y además bloqueada porque falta instalar Ryu |
-| Fase 5 completa (banco de ataques) | No se ejecutó por alcance, y además bloqueada porque faltan `nmap`/`hping3`/`scapy` y el runbook asume `ip netns exec`, que no aplica aquí |
+| Fase 4 (cuello de botella del controlador) | Pendiente: requiere instalar Ryu primero (Fase 4.0). No ejecutada en corrida 2 por indicación de detenerse tras la Fase 2 |
+| Fase 5 (banco de ataques) | Pendiente: requiere instalar `nmap`/`hping3`/`scapy` en el host atacante (Fase 5.0) |
