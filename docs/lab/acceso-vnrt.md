@@ -51,19 +51,31 @@ scripts/vnrt-ssh.sh h2                       # abre sesión interactiva en h2
 ## Topología según el diagrama
 
 Interpretación a partir de la imagen del VNRT. Las líneas verdes son gestión
-(MP_Link) y las azules son enlaces de datos. **Claude Code debe verificar esto
-contra la realidad** en la fase 1 del reconocimiento, no darlo por cierto: los
-números de enlace se solapan en el diagrama y el mapeo puerto a puerto sale de
-inspeccionar los switches, no de la figura.
+(MP_Link) y las azules son enlaces de datos.
 
-Plano de datos (líneas azules), lectura preliminar:
+**Lectura preliminar de la imagen (ya verificada y corregida, ver abajo):**
 
-- **sw1** conecta con: h2, controller, y sube hacia sw2.
-- **sw2** conecta con: h1, y enlaza con sw1 y sw3. Parece el switch central.
-- **sw3** conecta con: h3, h4, y baja hacia sw2.
+- ~~sw1 conecta con: h2, controller, y sube hacia sw2.~~
+- ~~sw2 conecta con: h1, y enlaza con sw1 y sw3. Parece el switch central.~~
+- ~~sw3 conecta con: h3, h4, y baja hacia sw2.~~
+- ~~Cadena `sw1 — sw2 — sw3` con hosts colgando de cada switch.~~
 
-Es decir, una cadena `sw1 — sw2 — sw3` con hosts colgando de cada switch y el
-controlador conectado en sw1. Esto hay que confirmarlo.
+## Topología real, verificada en la fase 1 del reconocimiento (2026-09-15)
+
+Confirmada por correlación de contadores de tráfico (`ip -s link show`, sin
+tocar ninguna configuración de OVS) contra los 3 switches reales. Detalle
+completo del método y los números en `resultados-vnrt.md`.
+
+- **sw1** es el switch central: conecta al **controller** (`sw1/ens4`) y sube a
+  **sw2** y **sw3** por sus otros dos puertos de datos (`ens5`, `ens6` — no se
+  pudo determinar cuál va a cuál, ver pendientes en `resultados-vnrt.md`).
+- **sw2** conecta con **h1** (`ens5`) y **h2** (`ens6`), no con h2 solamente
+  como decía la lectura preliminar.
+- **sw3** conecta con **h3** (`ens5`) y **h4** (`ens6`), como se asumía.
+
+Es decir, topología en estrella con `sw1` en el centro (controller + sw2 + sw3),
+y los cuatro hosts repartidos dos y dos entre `sw2` y `sw3`. **No** es la cadena
+`sw1 — sw2 — sw3` que asumía la lectura preliminar del diagrama.
 
 ## Qué debe verificar Claude Code sobre la topología
 
