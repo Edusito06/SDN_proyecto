@@ -414,7 +414,30 @@ depende el diseño de detección de R3. Se usa un entorno virtual (`~/ryu-venv`)
 para no tocar el Python del sistema. Se avisará al coach que el entorno se
 modifica, por si el VNRT se reaprovisiona.
 
-Resultado de la instalación: _(se completa tras ejecutar)_
+**Resultado de la instalación (ejecutado 2026-09-15):**
+
+- `apt`/`sudo` **no se usaron**: el `sudo` de `controller` pide contraseña (solo
+  se configuró NOPASSWD para `ovs-*` en los switches). Para no tocar el sistema
+  compartido, el venv se creó con `python3 -m venv --without-pip ~/ryu-venv` y
+  pip se bootstrapeó desde la fuente oficial `https://bootstrap.pypa.io/get-pip.py`.
+  Todo queda dentro de `~/ryu-venv`, reversible con `rm -rf ~/ryu-venv`. pip
+  26.2.1, Python 3.12.3.
+- **`pip install ryu` FALLA** en Python 3.12: el `setup.py` de Ryu usa
+  `easy_install.get_script_args`, API que setuptools moderno ya eliminó
+  (`AttributeError: 'types.SimpleNamespace' object has no attribute
+  'get_script_args'`). Es la incompatibilidad conocida que el runbook anticipa.
+- **`pip install os-ken` OK**: os-ken 4.2.2 (con eventlet 0.41.2, compatible con
+  3.12). **Este es el controlador que queda funcionando.** Implicación para el
+  código del proyecto: los imports son `os_ken.*`, no `ryu.*` (equivalentes uno
+  a uno). Anotado también en el ADR de controlador.
+- **Salvedad de empaquetado:** el wheel de os-ken 4.2.2 en PyPI **no incluye el
+  módulo `os_ken.cmd`** ni registra el console-script `osken-manager`, así que no
+  hay comando lanzador. La API interna (`os_ken.base.app_manager`,
+  `os_ken.controller.controller.OpenFlowController`, `os_ken.lib.hub`) sí está
+  completa y espeja la de Ryu, por lo que se usa un lanzador propio mínimo
+  (`tools/osken_run.py`) que hace lo mismo que `ryu-manager` por dentro
+  (cargar la app, crear contextos, instanciar y levantar el `OpenFlowController`).
+  La clase base de las apps es `app_manager.OSKenApp`.
 
 ## Fase 5. Banco de ataques
 
