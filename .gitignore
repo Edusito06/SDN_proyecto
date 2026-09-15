@@ -23,8 +23,10 @@ venv/
 resultados/raw/
 *.log
 
-# PDFs generados a partir de Markdown (el fuente es el .md)
+# PDFs generados a partir de Markdown (el fuente es el .md).
+# Los documentos de referencia del curso y los avances entregados si se versionan.
 docs/**/*.pdf
+!docs/referencia/**
 !entregables/**/*.pdf
 
 # Sistema y editores
