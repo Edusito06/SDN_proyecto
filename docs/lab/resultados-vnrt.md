@@ -391,11 +391,30 @@ hosts. Queda anotada como pendiente, no como dato inventado.
 solo devuelve `sw1`; `bench0` ya no aparece. Ninguna regla ni bridge de la
 topología real fue tocado.
 
-## Fase 4. Cuello de botella del controlador
+## Fase 4. Cuello de botella del controlador (corrida 3, en curso)
 
-**No ejecutada.** Además, no se puede ejecutar todavía porque el nodo
-`controller` no tiene Ryu instalado (ver hallazgo en Fase 1). Requiere
-instalar Ryu primero, con permiso explícito.
+### 4.0 Instalación planificada (registro previo, autorizada por Eduardo)
+
+Antes de instalar nada se deja constancia de qué se va a instalar y con qué
+comando, en el nodo `controller` (2 vCPU, 1.9 GiB RAM, Ubuntu 24.04, Python
+3.12.3, sin Ryu ni pip):
+
+```bash
+# en controller
+sudo apt-get update
+sudo apt-get install -y python3-venv python3-pip
+python3 -m venv ~/ryu-venv
+source ~/ryu-venv/bin/activate
+pip install --upgrade pip
+pip install ryu            # si eventlet choca con Python 3.12, fallback: pip install os-ken
+```
+
+Motivo: la Fase 4 mide el techo de Packet-In/s del controlador, dato del que
+depende el diseño de detección de R3. Se usa un entorno virtual (`~/ryu-venv`)
+para no tocar el Python del sistema. Se avisará al coach que el entorno se
+modifica, por si el VNRT se reaprovisiona.
+
+Resultado de la instalación: _(se completa tras ejecutar)_
 
 ## Fase 5. Banco de ataques
 
