@@ -52,18 +52,45 @@ justificar la decisión con datos y no con opinión.
 
 ## Paso 0: acceso al entorno
 
-Datos conocidos del AVZ02: gateway de gestión `10.20.11.184` con reenvío de
-puertos, Controller en 5800, SW1 en 5801, H1 en 5811. La red ploma no es
-enrutable desde fuera.
+El detalle completo de acceso y el mapa de la topología están en
+`docs/lab/acceso-vnrt.md`. Léelo antes de seguir. En resumen:
 
-Confirma con Eduardo cómo entras (SSH al gateway, VM local, u otro) y anota el
-método exacto al inicio del archivo de resultados. Verifica que estás dentro
-antes de seguir:
+Cada nodo se alcanza por SSH contra un gateway común con reenvío de puertos,
+usuario `ubuntu`, un puerto por nodo:
+
+| Nodo | Puerto | | Nodo | Puerto |
+|---|---|---|---|---|
+| controller | 5800 | | h1 | 5811 |
+| sw1 | 5801 | | h2 | 5812 |
+| sw2 | 5802 | | h3 | 5813 |
+| sw3 | 5803 | | h4 | 5814 |
+
+```bash
+ssh ubuntu@<GATEWAY> -p 5801   # ejemplo: sw1
+```
+
+**El `<GATEWAY>` cambia entre sesiones del VNRT.** Pídele a Eduardo la IP vigente,
+confírmala y anótala como primera línea de `resultados-vnrt.md`. Los puertos son
+fijos. Hay un helper en `scripts/vnrt-ssh.sh` que evita memorizar puertos.
+
+Importante: **cada nodo es una máquina distinta**. El reconocimiento se hace nodo
+por nodo. Los comandos de OVS de la fase 1.2 y 2 corren dentro de sw1, sw2 y sw3;
+los de controladores y la app de medición corren dentro de `controller`; los
+ataques de la fase 5 se lanzan desde el host que haga de atacante. No asumas que
+todo vive en una sola shell.
+
+Antes de nada, en cada nodo al que entres, verifica y anota qué es:
 
 ```bash
 hostname; whoami; id
 ip -br a
 ```
+
+Primera tarea concreta de la fase 1: recorrer los ocho nodos, confirmar el mapa
+de topología preliminar de `acceso-vnrt.md` contra lo que reportan los switches
+(puertos OpenFlow, MACs aprendidas, LLDP si lo hay) y dejar en `resultados-vnrt.md`
+la tabla real de qué puerto de cada switch va a qué nodo. Ese mapa es
+imprescindible para la detección de IP spoofing de R3.
 
 ## Fase 1: inventario del entorno (solo lectura)
 
