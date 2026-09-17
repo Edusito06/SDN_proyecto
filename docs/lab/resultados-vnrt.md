@@ -554,7 +554,19 @@ Packet-In del controlador. Sin esto, los umbrales de R3 (T, N_dst, N_port,
 N_miss) y las métricas de ≥95% de R1/R2 no se pueden medir, solo declarar como
 pendientes.
 
-Resultado de la instalación: _(se completa tras ejecutar)_
+**Resultado de la instalación (ejecutado 2026-09-17):**
+
+| Nodo | Paquete | Versión |
+|---|---|---|
+| h4 | nmap | 7.94SVN |
+| h4 | hping3 | 3.0.0-alpha-2 |
+| h4 | python3-scapy | 2.5.0 |
+| h1 | iperf3 | 3.16 (cJSON 1.7.15) |
+
+`iperf3` en `h1` se dejó **sin arrancar como daemon** (respuesta "No" al
+debconf de arranque automático): se levanta manualmente con `iperf3 -s` solo
+durante la prueba de tráfico legítimo, para no dejar un servicio escuchando
+permanentemente en un nodo compartido del curso.
 
 ## Hallazgos que afectan el diseño
 
