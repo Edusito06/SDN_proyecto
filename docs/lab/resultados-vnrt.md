@@ -568,6 +568,11 @@ debconf de arranque automático): se levanta manualmente con `iperf3 -s` solo
 durante la prueba de tráfico legítimo, para no dejar un servicio escuchando
 permanentemente en un nodo compartido del curso.
 
+**Ajuste sobre la marcha:** el plan original solo instaló `iperf3` en el
+objetivo (`h1`, servidor). El cliente (`h2`) también necesita el binario
+(`iperf3 -c`), y no se había registrado. Se instala con el mismo comando:
+`sudo apt-get install -y iperf3` en `h2`.
+
 ## Hallazgos que afectan el diseño
 
 1. ~~**Los tres bridges reales (`sw1`, `sw2`, `sw3`) están configurados solo con
