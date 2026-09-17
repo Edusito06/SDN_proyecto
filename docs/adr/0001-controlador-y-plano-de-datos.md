@@ -77,6 +77,39 @@ tiene TCAM. El presupuesto de TCAM que pide la rúbrica de R2 se calcula sobre u
 modelo de switch de hardware y se presenta por separado de cualquier medición
 hecha en OVS.
 
+## Addendum 2026-09-17 — Ryu se sustituye por os-ken (misma decisión, otra distribución)
+
+La decisión de fondo (controlador Python sobre OVS con OpenFlow 1.3) **no cambia**.
+Cambia la distribución concreta, por un hecho verificado en la fase 4:
+
+- **Ryu no se puede instalar en el VNRT.** Su `setup.py` invoca
+  `easy_install.get_script_args`, API que setuptools moderno ya eliminó, y la
+  instalación aborta con `AttributeError`. El nodo `controller` corre Python
+  3.12.3 y Ryu, sin mantenimiento desde hace años, no es compatible.
+- **Se adopta os-ken 4.2.2**, el fork mantenido de Ryu (lo sostiene OpenStack).
+  Instalado en un entorno virtual, sin tocar el Python del sistema.
+- **La API es equivalente una a una**: el pipeline, el contrato de tablas, las
+  prioridades y los eventos quedan idénticos. El único cambio es el espacio de
+  nombres de los imports: `os_ken.*` en lugar de `ryu.*`, y la clase base
+  `OSKenApp` en lugar de `RyuApp`.
+- Salvedad de empaquetado: el wheel de os-ken no incluye `os_ken.cmd` ni el
+  ejecutable `osken-manager`, así que el proyecto usa un lanzador propio,
+  `tools/osken_run.py`, que replica lo que hace `ryu-manager` por dentro.
+
+**Qué decir si el jurado pregunta:** se eligió Ryu por criterio técnico y de
+alineación con el curso; al llevarlo al entorno real se encontró que está
+descontinuado y no instala en Python 3.12, y se migró a su fork mantenido sin
+alterar el diseño. Es un hallazgo de la validación temprana del entorno, no un
+cambio de arquitectura.
+
+Los documentos ya entregados en Paideia (AVZ01-AVZ03) dicen "Ryu"; son registro
+histórico y no se reescriben. Esta corrección se declara en la exposición.
+
+Validación asociada de la fase 4: el controlador sostiene **~11 000 Packet-In/s**
+antes de saturar, y **~4 000/s** dentro del presupuesto de CPU del AVZ02, con
+latencia de 1.45 ms a 100 flujos/s. La preocupación anotada abajo (que el techo
+resultara ajustado frente a los 500 ms) **queda descartada con datos**.
+
 ## Revisión
 
 Se reabre este ADR solo si el entorno del curso habilita un plano de datos

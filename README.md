@@ -39,19 +39,41 @@ Coach: Fernando Guzmán. Asesoría: domingos 5 PM.
 
 ## Entorno
 
-Laboratorio VNRT. Gateway de gestión `10.20.11.184` con reenvío de puertos
-(Controller 5800, SW1 5801, H1 5811). Red de acceso `192.168.0.0/24`.
-Red SDN `10.0.0.0/24` y `172.16.0.0/24`, no enrutable desde fuera.
+Laboratorio VNRT. **El gateway de gestión cambia entre sesiones** (hoy
+`10.20.12.153`; antes `10.20.11.184`): confírmalo antes de trabajar. Reenvío de
+puertos por nodo, ver `docs/lab/acceso-vnrt.md`. Helper: `scripts/vnrt-ssh.sh`.
 
-Stack: Open vSwitch con OpenFlow 1.3, controlador Ryu, Northbound API REST.
+Las tres redes, **verificadas** en el reconocimiento (no confundirlas, los
+avances entregados las tenían cambiadas):
+
+| Red | Función |
+|---|---|
+| `10.0.0.0/24` | **Plano de datos**: tráfico de usuario, es lo que controla OpenFlow |
+| `192.168.0.0/24` | **Gestión**: canal OpenFlow switch↔controlador y acceso SSH |
+| `172.16.0.0/24` | Direcciones internas de los bridges OVS; no se usa para control |
+
+Topología real: **estrella con `sw1` al centro** (controlador en sw1; `h1`/`h2` en
+sw2; `h3`/`h4` en sw3). Ver `docs/diagramas/topologia-vnrt.md`.
+
+Stack: Open vSwitch 3.3.9 con OpenFlow 1.3, controlador **os-ken** (fork
+mantenido de Ryu; Ryu no instala en Python 3.12, ver ADR 0001), Northbound API REST.
 
 ## Cómo levantar el entorno
 
+> Estado: `src/`, `topology/` y `tests/` son todavía estructura vacía. Los
+> comandos de abajo son el objetivo, no funcionan aún. Lo que **sí** funciona hoy
+> son las herramientas de medición en `tools/`.
+
 ```bash
-sudo python3 topology/campus_topo.py        # levanta namespaces y bridges OVS
-ryu-manager src/controller/main.py          # levanta el controlador
-pytest tests/unit                           # pruebas unitarias
-sudo python3 tests/integration/run_scan.py  # escenario de ataque y métricas
+# Medición del plano de control (funciona hoy, en el nodo controller)
+source ~/ryu-venv/bin/activate
+python tools/osken_run.py bench_packetin        # levanta el controlador de medición
+python3 tools/loadgen_packetin.py 1000 8        # genera carga desde un host
+
+# Objetivo (aún por implementar)
+sudo python3 topology/campus_topo.py
+python tools/osken_run.py src/controller/main.py
+pytest tests/unit
 ```
 
 ## Estructura
