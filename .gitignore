@@ -28,6 +28,9 @@ resultados/raw/
 docs/**/*.pdf
 !docs/referencia/**
 !entregables/**/*.pdf
+# Los diagramas SI se versionan: son fuente de los documentos, no salida
+# generada. Sin ellos, quien clone el repo no puede construir los HLD.
+!docs/diagramas/*.pdf
 
 # Sistema y editores
 .DS_Store

@@ -159,16 +159,7 @@ R2 ocupa la **tabla de política** y los rangos **30000-49999** del contrato
 (`../contratos/tablas-openflow.md`). Lee el rol desde `metadata` —escrito por R1—
 y **nunca lo modifica**.
 
-```
-  tabla 0        tabla 1         tabla 2          tabla 3          tabla 4
-    (R3)          (R3)            (R1)             (R2)            (común)
- antispoofing → mitigación → identidad y rol → política de   →   reenvío
- IP+MAC+puerto   bloqueo del   write_metadata     recurso          L2
-                 atacante                      lee metadata
-      │              │               │                │
-   descarta       descarta      Packet-In si     descarta + registra
-   spoofing       atacante      no lo conoce     si no autorizado
-```
+![Pipeline de tablas OpenFlow y su relación con R1, R2 y R3.](../diagramas/r2-pipeline-tablas.pdf){width=95%}
 
 Por qué el orden importa para R2:
 

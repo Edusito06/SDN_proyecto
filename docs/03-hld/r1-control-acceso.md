@@ -35,28 +35,7 @@ siempre en el plano de datos.**
 
 ## 2. Modelo de red de referencia
 
-```
-                    ┌──────────────────────────────┐
-     PLANO DE       │      Controlador SDN         │
-     CONTROL        │  R1 · R2 · R3 (bus interno)  │
-                    │  Northbound API REST         │
-                    └──────────────┬───────────────┘
-                                   │ OpenFlow 1.3 (canal de control dedicado)
-         ┌─────────────────┬───────┴────────┬─────────────────┐
-         │                 │                │                 │
-   ┌─────┴─────┐     ┌─────┴─────┐    ┌─────┴─────┐    ┌──────┴──────┐
-   │  Switch   │     │  Switch   │    │  Switch   │    │   Switch    │
-   │ de acceso │     │ de acceso │    │ de acceso │    │ de núcleo / │
-   │    A      │     │    B      │    │    C      │    │distribución │
-   └─────┬─────┘     └─────┬─────┘    └─────┬─────┘    └──────┬──────┘
-         │                 │                │                 │
-    ┌────┴────┐       ┌────┴────┐      ┌────┴────┐      ┌─────┴──────┐
-    │ Alumnos │       │Docentes │      │  Admin  │      │ SERVIDORES │
-    │         │       │         │      │  de red │      │ (recursos  │
-    └─────────┘       └─────────┘      └─────────┘      │privilegiados)│
-                                                        └────────────┘
-         └───────── PLANO DE DATOS: tráfico de usuario ──────────┘
-```
+![Modelo de red de referencia: plano de control y plano de datos.](../diagramas/r1-modelo-red.pdf){width=95%}
 
 Dos principios de direccionamiento que sostienen todo el diseño:
 
@@ -165,31 +144,7 @@ Razones de la elección, en orden de peso:
 
 ## 6. Lógica del proceso desde solicitud hasta autorización [16]
 
-```
-   Host              Switch de acceso        Controlador SDN        Tabla de roles
- (alumno)               (OpenFlow 1.3)          (módulo R1)
-    │                       │                        │                    │
-    │--1. primer paquete--->│                        │                    │
-    │                       │ T0 (R3): terna         │                    │
-    │                       │   IP+MAC+puerto OK     │                    │
-    │                       │ T1 (R3): sin bloqueo   │                    │
-    │                       │ T2 (R1): SIN COINCIDENCIA                   │
-    │                       │                        │                    │
-    │                       │--2. Packet-In--------->│                    │
-    │                       │                        │--3. buscar MAC---->│
-    │                       │                        │<--4. rol = alumno--│
-    │                       │<--5. FLOW_MOD----------│                    │
-    │                       │   tabla 2, prioridad 20000-29999            │
-    │                       │   match:   eth_src = MAC del host           │
-    │                       │   acción:  write_metadata(rol, sesión)      │
-    │                       │            goto_table (política)            │
-    │                       │<--6. confirmación----->│                    │
-    │                       │                        │                    │
-    │                       │   [evento host_autenticado → R2, R3]        │
-    │                       │                        │                    │
-    │--7. tráfico siguiente>│ T2 ACIERTA → T3 (política) → T4 (reenvío)   │
-    │<--8. conmutado en el switch, sin subir al controlador-------------->│
-```
+![Secuencia de autenticación: desde el primer paquete hasta la instalación de la regla de rol.](../diagramas/r1-secuencia-autenticacion.pdf){width=95%}
 
 Tres puntos para remarcar en la exposición:
 
@@ -323,14 +278,9 @@ márgenes.
 ## 12. Interfaz con los otros módulos
 
 R1 escribe el rol en `metadata` en la **tabla de identidad** y usa prioridades
-**20000-29999**. Ver `../contratos/tablas-openflow.md`.
+**20000-29999**. Ver el contrato de tablas en `contratos/tablas-openflow.md`.
 
-```
-   R1 --host_autenticado--> R2   (conoce el rol para aplicar política)
-   R1 --host_autenticado--> R3   (línea base de la terna IP/MAC/puerto)
-   R3 --ataque_detectado--> R1   (revoca sesión)
-   R1 --sesion_revocada---> R2   (extiende el bloqueo)
-```
+![Interfaz de R1 con los otros módulos del proyecto.](../diagramas/r1-interfaz-modulos.pdf){width=68%}
 
 ## 13. Métricas comprometidas
 
