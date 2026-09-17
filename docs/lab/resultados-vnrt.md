@@ -573,6 +573,162 @@ objetivo (`h1`, servidor). El cliente (`h2`) también necesita el binario
 (`iperf3 -c`), y no se había registrado. Se instala con el mismo comando:
 `sudo apt-get install -y iperf3` en `h2`.
 
+### 5.1 Montaje del banco
+
+Se corrigió un supuesto de diseño a medio camino: para que `nmap`/`hping3`
+generen tráfico de verdad, `h4` (atacante, en `sw3`) necesita resolver ARP de
+`h1` (objetivo, en `sw2`), lo que exige reenvío real a través de `sw1`. Un
+diseño inicial que solo "observaba" en `sw3` sin reenviar dejaba el ARP sin
+cruzar y ninguna herramienta llegaba a generar tráfico real.
+
+Solución: `tools/bench_ataques.py`, conectado a **los tres switches**
+(`sw1`, `sw2`, `sw3`), con aprendizaje L2 (MAC → puerto) para saber por dónde
+reenviar. La topología es un árbol sin ciclos, así que floodear lo
+desconocido no genera tormenta de broadcast. Cada Packet-In se registra en
+`~/bench/ataques_log.jsonl` (timestamp, switch, puerto, MACs, IPs, protocolo,
+puertos L4) **antes** de reenviarlo, y `tools/analizar_ataques.py` calcula,
+por ventana de tiempo, eventos totales, tasa, IPs y puertos distintos.
+
+**Hallazgo de metodología, corregido en la propia corrida:** la primera
+versión del banco instalaba la regla de reenvío por **par de MACs**
+(`in_port` + `eth_dst`), no por flujo. Efecto: el primer paquete de un
+escaneo de puertos instalaba una regla que dejaba invisibles los 999
+restantes, porque todos comparten el mismo par de MACs. El escenario 2, en su
+primera corrida, mostró solo 3 eventos ARP y **cero** TCP para un scan de
+1000 puertos — precisamente por esto. Se corrigió para que la regla matchee
+por **quíntupla** (IP origen, IP destino, protocolo, puerto origen, puerto
+destino), igual de específico que lo que la tabla 0 real de R3 necesitará
+evaluar. Con la corrección, el mismo escenario mostró 6711 eventos y 1002
+puertos distintos (ver 5.3). Es un hallazgo de diseño legítimo, no un
+detalle de implementación: confirma que **un switch que solo aprende a nivel
+de L2 es ciego a un escaneo de puertos una vez que conoce la ruta**, y es
+exactamente el motivo por el que R3 necesita visibilidad por flujo, no por
+par de direcciones MAC.
+
+### 5.2 Objetivo, atacante y roles
+
+Atacante: `h4` (10.0.0.4, en `sw3`). Objetivo: `h1` (10.0.0.1, en `sw2`). El
+tráfico cruza `sw1`, que es donde conviene observar la detección. Tráfico
+legítimo de control: `h2` (10.0.0.2, cliente) ↔ `h1` (servidor), ambos en
+`sw2`.
+
+### 5.3 Resultados por escenario
+
+| # | Escenario | Comando | Ventana | Eventos | Tasa | IPs origen | Puertos destino distintos |
+|---|---|---|---|---|---|---|---|
+| 1 | Network scanning | `sudo nmap -sn 10.0.0.0/24` | 3.80 s | 1538 | 405.1/s | 3 (respuestas incluidas) | 0 (todo ARP) |
+| 2 | Port scan rápido | `sudo nmap -sS -p 1-1000 10.0.0.1` | 7.68 s | 6711 | 873.4/s | 2 | **1002** |
+| 3 | Port scan lento (`-T1`) | `sudo nmap -sS -T1 -p 1-100 10.0.0.1` | *(corriendo, ver 5.4)* | | | | |
+| 4 | IP spoofing | `sudo hping3 -a 10.0.0.99 -S -p 80 -c 100 10.0.0.1` | 102.09 s | 591 (336 tcp) | 5.8/s | 3 | 9 |
+| 5 | Flood muchos-a-uno | `sudo hping3 --flood -S -p 80 -c 20000 10.0.0.1` | 10 s (muestra) | 13 812 | **1381.2/s** | 2 | 576 |
+| 6 | Tráfico legítimo intenso | `iperf3 -c 10.0.0.1 -t 15` (8.65 Gbit/s reales) | 18.51 s | **8** | 0.4/s | 2 | 3 |
+
+**Escenario 1 — network scanning.** `nmap -sn` detectó correctamente los 4
+hosts vivos (`h1`-`h4`) en 2.23 s. Firma: 100% ARP, 256 IP destino distintas
+(todo el `/24`), 3 IP origen (las respuestas de los hosts vivos también
+cuentan como eventos, porque cada salto nuevo de un MAC hacia otro switch
+genera su propio table-miss). **Hallazgo colateral:** con un switch de
+aprendizaje L2 simple (sin optimización tipo proxy-ARP), un solo broadcast
+de descubrimiento se multiplica varias veces porque **cada switch que cruza
+genera su propio evento** al no tener una regla para tráfico de broadcast.
+Esto sustenta por qué la detección de R3 debe vivir en el switch de acceso
+(tabla 0, lo más cerca posible del atacante), no en un conteo agregado de
+todo el dominio.
+
+**Escenario 2 — port scan rápido.** 6711 eventos, **1002 puertos destino
+distintos** en 7.68 s. Firma clarísima: una sola IP origen, una IP destino,
+cientos de puertos por segundo. Nota honesta: con el reenvío por quíntupla ya
+corregido, algunas sondas salieron "filtered" (543 de 1000) en el reporte de
+nmap — indicio de que forzar cada puerto nuevo a pasar por el controlador
+agrega suficiente latencia como para que algunas sondas expiren bajo tráfico
+sostenido a esta tasa. Es información útil: la propia mediación del
+controlador ya introduce fricción medible en carga.
+
+**Escenario 4 — IP spoofing.** La firma más limpia de las seis: 336 paquetes
+TCP con `ip_src=10.0.0.99` (IP que no existe como host) llegando por el
+puerto físico real de `h4` (MAC `fa:16:3e:35:f5:89`, `in_port=1` en `sw3`).
+Esto es exactamente la discrepancia que la tabla 0 de R3 debe detectar: la
+IP declarada no coincide con la que le corresponde a esa combinación de MAC
+y puerto de ingreso. 0% de paquetes recibidos por el atacante (correcto: la
+respuesta de `h1` va a la IP falsa, no a `h4`).
+
+**Escenario 5 — flood muchos-a-uno.** El hallazgo más importante de la fase,
+en dos partes:
+
+1. **`hping3 --flood` con esta versión (3.0.0-alpha-2) ignora el límite
+   `-c`.** El flag de conteo solo aplica en modo normal; en modo flood el
+   binario está pensado para correr indefinido hasta `Ctrl+C`. Se pidieron
+   20 000 paquetes; el controlador registró **más de 1.4 millones de
+   eventos** antes de que se matara el proceso manualmente
+   (`sudo pkill -9 -f 'hping3|nmap'`, ejecutado por Eduardo). Es una
+   limitación documentada de esa versión tan antigua del binario, no un
+   error del banco de pruebas. Tras matar el proceso atacante, el
+   controlador siguió reportando ~1400-1500 eventos/s durante varios
+   minutos más: se diagnosticó como `h1` **drenando su propio backlog** de
+   respuestas RST pendientes a los cientos de miles de SYN que había
+   recibido (los `dport` de las respuestas suben de forma perfectamente
+   secuencial, confirmando que es una cola finita, no un bucle). Terminó
+   solo, sin intervención, una vez vaciada.
+2. **CPU del controlador confirmada al 110%** durante el flood (medido con
+   dos muestras de `/proc/<pid>/stat` separadas 1 s, mismo método que la
+   fase 4), con **1381 eventos/s sostenidos** y **576 puertos destino
+   distintos** en una ventana limpia de 10 s tomada al inicio del ataque
+   (antes de que la duración excesiva contaminara la medición).
+
+   **Esto es un techo más bajo y más realista que el de la fase 4.** La
+   fase 4 midió ~11 000 Packet-In/s con una app que solo contaba eventos.
+   Esta app además parsea cada paquete (Ethernet/ARP/IP/TCP/UDP/ICMP),
+   calcula una quíntupla y decide una regla — que es el trabajo real que R3
+   tendrá que hacer. El resultado: **con un flood de puertos origen
+   variables (que nunca cachea), el techo efectivo baja a ~1300-1400
+   eventos/s, casi un orden de magnitud menos que el número idealizado de
+   la fase 4.** No invalida la fase 4 (ese número sigue siendo el límite
+   físico del framework), pero sí precisa cuál es el margen real disponible
+   para la lógica de detección de R3 antes de saturar un núcleo.
+   **Conclusión de diseño:** esto no vuelve inviable la arquitectura, la
+   justifica más: es el argumento cuantitativo de por qué R3 necesita
+   contener el flood en el **plano de datos** (meters, confirmados
+   soportados en la fase 2) en vez de depender solo del plano de control.
+
+**Escenario 6 — tráfico legítimo intenso.** El contraste que hace falta para
+los falsos positivos: una transferencia real de **15.1 GB a 8.65 Gbit/s**
+sostenidos entre `h1` y `h2` generó apenas **8 eventos** de Packet-In en 18.5
+segundos (2 ARP + 6 TCP del handshake en ambas direcciones). Confirma en la
+práctica el argumento central de R1/R2: el volumen de datos de un flujo no
+importa, porque solo el primer paquete sube al controlador. Frente a los
+cientos o miles de eventos por segundo de los escenarios de ataque, la
+diferencia es de varios órdenes de magnitud — ese hueco es justamente el
+espacio donde caben los umbrales de R3.
+
+### 5.4 Escenario 3 pendiente de cierre
+
+El escaneo lento (`-T1`) se intentó dos veces. La primera corrida se
+contaminó porque coincidió con el cambio de diseño del banco (reenvío por
+MAC → por quíntupla) a medio escaneo, y el proceso quedó colgado más de 20
+minutos esperando una retransmisión que nunca llegaba (efecto del reinicio
+de reglas), hubo que matarlo manualmente. Se relanzó limpio, aislado, sin
+otros procesos de ataque corriendo en paralelo. Resultado en la sección
+siguiente una vez termine (es lento a propósito: puede tardar varios
+minutos).
+
+### 5.5 Propuesta preliminar de umbrales para R3
+
+A partir de los datos de 5.3 (falta incorporar el escenario 3 lento cuando
+cierre):
+
+| Parámetro | Valor propuesto | Justificación desde los datos |
+|---|---|---|
+| Ventana de observación T | 2 s | Suficiente para separar un scan (cientos de eventos/2s) de tráfico legítimo (0-1 evento/2s en régimen estable) |
+| Umbral de destinos distintos N_dst | 20 en T | El network scan tocó 256 IP en 3.8s (~135/2s); el tráfico legítimo tocó 1 IP en toda la ventana |
+| Umbral de puertos distintos N_port | 15 en T | El port scan tocó 1002 puertos en 7.68s (~260/2s); el tráfico legítimo tocó 1-3 puertos en 18.5s completos |
+| Umbral de Packet-In fallidos N_miss | *(pendiente, requiere fase 3 -T1 cerrada)* | El caso lento es justamente el que decide si un umbral simple de tasa alcanza o si hace falta acumular sobre ventanas más largas |
+
+**Advertencia honesta:** estos son valores preliminares, calculados sobre
+seis corridas puntuales, no una distribución estadística. Sirven para
+proponer el diseño de R3 en el HLD; antes del Ex2 conviene repetir cada
+escenario varias veces para tener margen de confianza, y el escenario lento
+en particular es el que puede obligar a bajar estos umbrales.
+
 ## Hallazgos que afectan el diseño
 
 1. ~~**Los tres bridges reales (`sw1`, `sw2`, `sw3`) están configurados solo con
