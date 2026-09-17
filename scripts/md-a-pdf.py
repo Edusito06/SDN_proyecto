@@ -2,16 +2,27 @@
 """Exporta un documento Markdown a PDF sin necesidad de pandoc ni LaTeX.
 
 Alternativa a scripts/md-a-pdf.sh para maquinas donde no hay instalada una
-distribucion de LaTeX. Solo requiere reportlab:
+distribucion de LaTeX. Requiere:
 
-    python -m pip install reportlab fonttools
+    python -m pip install reportlab fonttools pdfrw
 
 Uso:
     python scripts/md-a-pdf.py docs/03-hld/r1-control-acceso.md entregables/ex1/HLD-R1-G5.pdf
 
 Soporta: encabezados, parrafos, negrita/cursiva/codigo en linea, listas,
-citas, tablas de tuberias y bloques de codigo (los diagramas ASCII se
-renderizan en monoespaciada y se reduce el cuerpo si la linea es muy ancha).
+citas, tablas de tuberias, bloques de codigo (los diagramas ASCII se
+renderizan en monoespaciada y se reduce el cuerpo si la linea es muy ancha)
+e imagenes con sintaxis pandoc:
+
+    ![Pie de figura.](../diagramas/figura.pdf){width=95%}
+
+Las figuras en PDF se incrustan como vector (sin perdida de calidad) via pdfrw;
+tambien acepta PNG/JPG. La ruta se resuelve relativa al documento de entrada,
+igual que hace pandoc con --resource-path.
+
+Nota: este script NO numera las secciones automaticamente, a proposito. Los
+encabezados de los documentos ya traen su numero manual porque mapean a los
+criterios de la rubrica.
 """
 
 import os
@@ -25,9 +36,9 @@ from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.lib.units import cm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import (KeepTogether, PageBreak, Paragraph,
-                                Preformatted, SimpleDocTemplate, Spacer, Table,
-                                TableStyle)
+from reportlab.platypus import (Flowable, Image, KeepTogether, PageBreak,
+                                Paragraph, Preformatted, SimpleDocTemplate,
+                                Spacer, Table, TableStyle)
 
 FONTS = "C:/Windows/Fonts"
 BODY, BODY_B, BODY_I = "Body", "Body-Bold", "Body-Italic"
@@ -96,6 +107,9 @@ def estilos():
                                 textColor=colors.HexColor("#444444"),
                                 borderPadding=(6, 6, 6, 8),
                                 backColor=colors.HexColor("#f2f5f8"))
+    s["pie"] = ParagraphStyle("pie", fontName=BODY_I, fontSize=8.2, leading=11,
+                              alignment=1, spaceAfter=10,
+                              textColor=colors.HexColor("#55636d"))
     s["celda"] = ParagraphStyle("celda", fontName=BODY, fontSize=8, leading=10.5)
     s["celda_h"] = ParagraphStyle("celda_h", fontName=BODY_B, fontSize=8,
                                   leading=10.5, textColor=colors.white)
@@ -154,6 +168,62 @@ def construir_tabla(filas, s, ancho_util):
     return t
 
 
+class FiguraPdf(Flowable):
+    """Incrusta la primera pagina de un PDF como figura vectorial."""
+
+    def __init__(self, ruta, ancho):
+        super().__init__()
+        from pdfrw import PdfReader as PdfrwReader
+        from pdfrw.buildxobj import pagexobj
+        self._xobj = pagexobj(PdfrwReader(ruta).pages[0])
+        bbox = self._xobj.BBox
+        self._x0, self._y0 = float(bbox[0]), float(bbox[1])
+        ancho_nativo = float(bbox[2]) - self._x0
+        alto_nativo = float(bbox[3]) - self._y0
+        self._escala = ancho / ancho_nativo
+        self.width = ancho
+        self.height = alto_nativo * self._escala
+
+    def wrap(self, disp_ancho, disp_alto):
+        return self.width, self.height
+
+    def draw(self):
+        from pdfrw.toreportlab import makerl
+        c = self.canv
+        c.saveState()
+        c.scale(self._escala, self._escala)
+        c.translate(-self._x0, -self._y0)
+        c.doForm(makerl(c, self._xobj))
+        c.restoreState()
+
+
+def figura(ruta, ancho_pedido, ancho_util, alto_util, pie, s):
+    """Construye la figura (PDF vectorial o mapa de bits) con su pie."""
+    ancho = ancho_util * (ancho_pedido / 100.0)
+    if ruta.lower().endswith(".pdf"):
+        fig = FiguraPdf(ruta, ancho)
+    else:
+        from reportlab.lib.utils import ImageReader
+        iw, ih = ImageReader(ruta).getSize()
+        fig = Image(ruta, width=ancho, height=ancho * ih / iw)
+
+    # Si la figura no cabe a lo alto en una pagina, se reduce proporcionalmente.
+    alto_pie = 26
+    if fig.height > alto_util - alto_pie:
+        factor = (alto_util - alto_pie) / fig.height
+        if ruta.lower().endswith(".pdf"):
+            fig = FiguraPdf(ruta, ancho * factor)
+        else:
+            fig.drawWidth *= factor
+            fig.drawHeight *= factor
+
+    fig.hAlign = "CENTER"
+    partes = [fig]
+    if pie:
+        partes += [Spacer(1, 4), Paragraph(inline(pie), s["pie"])]
+    return KeepTogether(partes)
+
+
 def bloque_codigo(lineas, ancho_util):
     texto = "\n".join(lineas)
     mas_larga = max((len(l) for l in lineas), default=0)
@@ -171,6 +241,9 @@ def bloque_codigo(lineas, ancho_util):
 
 
 def convertir(ruta_md, ruta_pdf):
+    # Las rutas de las figuras se resuelven relativas al documento de entrada,
+    # igual que hace pandoc con --resource-path.
+    base_md = os.path.dirname(os.path.abspath(ruta_md))
     with open(ruta_md, encoding="utf-8") as f:
         crudo = f.read()
     for viejo, nuevo in SUSTITUCIONES.items():
@@ -219,6 +292,26 @@ def convertir(ruta_md, ruta_pdf):
             continue
 
         if not linea.strip():
+            i += 1
+            continue
+
+        # Figura: ![pie](ruta){width=NN%}  (sintaxis de pandoc)
+        m = re.match(r"^\s*!\[([^\]]*)\]\(([^)]+)\)\s*(\{[^}]*\})?\s*$", linea)
+        if m:
+            pie, ruta_rel, attrs = m.group(1), m.group(2), m.group(3) or ""
+            ancho_pedido = 100.0
+            ma = re.search(r"width\s*=\s*(\d+(?:\.\d+)?)\s*%", attrs)
+            if ma:
+                ancho_pedido = float(ma.group(1))
+            ruta = os.path.normpath(os.path.join(base_md, ruta_rel))
+            if os.path.exists(ruta):
+                historia.append(figura(ruta, ancho_pedido, ancho_util,
+                                       doc.height, pie, s))
+                historia.append(Spacer(1, 6))
+            else:
+                print(f"  AVISO: figura no encontrada: {ruta}", file=sys.stderr)
+                historia.append(Paragraph(
+                    f"<i>[figura no encontrada: {ruta_rel}]</i>", s["p"]))
             i += 1
             continue
 
@@ -276,7 +369,7 @@ def convertir(ruta_md, ruta_pdf):
         # Parrafo: acumula lineas hasta un corte
         trozos = []
         while i < len(lineas) and lineas[i].strip() and not re.match(
-                r"^(#{1,4}\s|\s*[-*+]\s|\s*\d+\.\s|>|\||```)", lineas[i]):
+                r"^(#{1,4}\s|\s*[-*+]\s|\s*\d+\.\s|>|\||```|\s*!\[)", lineas[i]):
             trozos.append(lineas[i].strip())
             i += 1
         if trozos:
