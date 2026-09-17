@@ -26,13 +26,22 @@ tenía dos supuestos equivocados que este documento reemplaza:
    con su propio puerto SSH. Todos los comandos que en el runbook viejo llevaban
    `ip netns exec <host> ...` se ejecutan aquí **directamente en la shell del
    host**, entrando por su SSH. Olvida `ip netns` en este VNRT.
-2. **Los bridges reales hablan solo OpenFlow 1.0.** Hay que habilitar 1.3 antes
-   de conectar Ryu (paso 0 de abajo).
+2. **Los bridges reales venían configurados solo con OpenFlow 1.0** (no por
+   falta de soporte del software: OVS 3.3.9 soporta 1.0 a 1.5, confirmado en la
+   fase 2 sobre `bench0`; era la configuración por bridge la que estaba en 1.0).
+   Hubo que habilitar 1.3 antes de conectar el controlador (paso 0 de abajo).
 
 ## Paso 0: habilitar OpenFlow 1.3 en los tres switches
 
-Sin esto, Ryu con OF1.3 no completa el handshake. En cada switch (`sw1`, `sw2`,
-`sw3`), por SSH:
+> **Estado: ya ejecutado** (corrida 2, 2026-09-15). Los tres switches quedaron
+> en `protocols=[OpenFlow13]` y el resultado está documentado en
+> `resultados-vnrt.md`, sección "Paso 0". El VNRT **sí soporta OpenFlow 1.3**;
+> lo que faltaba era prenderlo por bridge, no instalar ni compilar nada. Esta
+> sección queda como referencia de cómo se hizo y de cómo repetirlo si el VNRT
+> se reaprovisiona y los bridges vuelven a su configuración por defecto.
+
+Sin esto, un controlador que hable OF1.3 no completa el handshake. En cada
+switch (`sw1`, `sw2`, `sw3`), por SSH:
 
 ```bash
 sudo ovs-vsctl set bridge <nombre_bridge> protocols=OpenFlow13
