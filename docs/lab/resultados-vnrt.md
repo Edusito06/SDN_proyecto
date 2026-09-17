@@ -523,12 +523,38 @@ os-ken se detuvo (sesión tmux cerrada, puertos 6653/6633 liberados). El venv
 `~/ryu-venv` y los scripts en `~/bench` del nodo `controller` quedan instalados
 para futuras corridas (reversible con `rm -rf`).
 
-## Fase 5. Banco de ataques
+## Fase 5. Banco de ataques (corrida 4, en curso)
 
-**No ejecutada.** Además, tal como está escrito el runbook no se puede
-ejecutar sin ajustes: asume `ip netns exec`, que no aplica a este VNRT (ver
-hallazgo de Fase 1), y ninguno de los hosts tiene `nmap`/`hping3`/`scapy`
-instalado.
+### 5.0 Instalación planificada (registro previo, autorizada en `01-preparacion-y-pruebas.md`)
+
+Roles para esta corrida: **`h4` como atacante** (sw3), **`h1` como objetivo**
+(sw2). El tráfico cruza `sw1`, que es donde conviene observar la detección,
+siguiendo la sugerencia del runbook de continuación.
+
+Verificado antes de instalar: los 4 hosts piden contraseña de `sudo` (no hay
+NOPASSWD configurado en ellos, a diferencia de los switches) y ninguno trae
+`nmap`, `hping3`, `iperf3` ni `scapy`.
+
+Comandos a ejecutar (registrados antes de correrlos, como exige la regla de
+`01-preparacion-y-pruebas.md`):
+
+```bash
+# en h4 (atacante)
+sudo apt-get update
+sudo apt-get install -y nmap hping3 python3-scapy
+
+# en h1 (objetivo, para medir tráfico legítimo / falsos positivos)
+sudo apt-get install -y iperf3
+```
+
+Motivo: son las herramientas mínimas que pide la Fase 5 para generar los seis
+escenarios (network scanning, port scanning rápido y lento, IP spoofing, flood
+muchos-a-uno, tráfico legítimo) y medir la firma que cada uno deja en los
+Packet-In del controlador. Sin esto, los umbrales de R3 (T, N_dst, N_port,
+N_miss) y las métricas de ≥95% de R1/R2 no se pueden medir, solo declarar como
+pendientes.
+
+Resultado de la instalación: _(se completa tras ejecutar)_
 
 ## Hallazgos que afectan el diseño
 
