@@ -38,6 +38,14 @@ ESTADO_SIN_AUTENTICAR = 0
 ESTADO_AUTENTICADO = 1
 ESTADO_REVOCADO = 2
 
+NOMBRES_ROL = {
+    ROL_DESCONOCIDO: "desconocido",
+    ROL_ALUMNO: "alumno",
+    ROL_DOCENTE: "docente",
+    ROL_ADMIN_RED: "administrador_red",
+    ROL_SUPERUSUARIO: "superusuario",
+}
+
 
 def codificar_metadata(rol, estado):
     """(rol, estado) -> entero de metadata, tal como lo escribe R1."""
