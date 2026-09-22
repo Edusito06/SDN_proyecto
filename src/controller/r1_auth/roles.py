@@ -9,21 +9,7 @@ Sin dependencias de os_ken ni de red: se prueba con pytest normal, sin
 switch ni controlador reales (tests/unit/test_r1_roles.py).
 """
 
-from src.common.pipeline import (
-    ROL_ADMIN_RED,
-    ROL_ALUMNO,
-    ROL_DESCONOCIDO,
-    ROL_DOCENTE,
-    ROL_SUPERUSUARIO,
-)
-
-NOMBRES_ROL = {
-    ROL_DESCONOCIDO: "desconocido",
-    ROL_ALUMNO: "alumno",
-    ROL_DOCENTE: "docente",
-    ROL_ADMIN_RED: "administrador_red",
-    ROL_SUPERUSUARIO: "superusuario",
-}
+from src.common.pipeline import NOMBRES_ROL, ROL_ALUMNO
 
 
 class TablaDeRoles:
