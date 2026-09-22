@@ -4,13 +4,15 @@ Dos responsabilidades, ambas de "comun" segun el contrato de tablas:
 
 1. Tabla 4, reenvio L2 real: aprendizaje MAC -> puerto y flood mientras no se
    conoce el destino. Esto es definitivo, no un parche.
-2. Tablas 0, 1 y 3, reglas "de paso" a prioridad de table-miss (0): mientras
-   R3 (tablas 0-1) y R2 (tabla 3) no existan como modulos propios, un
-   paquete tiene que poder atravesar igual todo el pipeline para llegar a la
-   tabla 2 (R1) y a la 4. Esto SI es temporal: cuando R2 y R3 instalen su
-   propio table-miss en su tabla, el de aqui queda redundante (no rompe
+2. Tablas 0 y 1, reglas "de paso" a prioridad de table-miss (0): mientras R3
+   no exista como modulo propio, un paquete tiene que poder atravesar igual
+   esas dos tablas para llegar a la 2 (R1). Esto SI es temporal: cuando R3
+   instale su propio table-miss ahi, el de aqui queda redundante (no rompe
    nada, pero conviene retirarlo de este archivo en ese momento para no
    dejar reglas muertas).
+
+   La tabla 3 ya NO esta aqui: R2 (src.controller.r2_policy.app) instala su
+   propio table-miss desde que existe como modulo.
 """
 
 from os_ken.base import app_manager
@@ -24,7 +26,6 @@ from src.common import pipeline
 TABLAS_DE_PASO = (
     (pipeline.TABLA_ANTISPOOF, pipeline.TABLA_MITIGACION),   # 0 -> 1, mientras R3 no exista
     (pipeline.TABLA_MITIGACION, pipeline.TABLA_IDENTIDAD),   # 1 -> 2, mientras R3 no exista
-    (pipeline.TABLA_POLITICA, pipeline.TABLA_REENVIO),       # 3 -> 4, mientras R2 no exista
 )
 
 
