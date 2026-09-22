@@ -45,8 +45,19 @@ Los paquetes siguientes del mismo host ya no tocan al controlador: la regla de l
 
 **Nota de diseño:** revocar no borra la regla ni manda al host de vuelta al table-miss. Deja la regla activa pero con `estado=REVOCADO` en `metadata`, para que R2 (que lee el estado, no solo el rol) pueda decidir denegar incluso recursos antes permitidos, sin que el host tenga que volver a generar un `Packet-In` para eso.
 
+## Validado contra el VNRT (2026-09-22)
+
+Corrida real, no solo unitaria: `python tools/osken_run.py src.controller.r1_auth.app src.common.l2_forwarding` en el nodo `controller`, conectado a los tres switches reales (`sw1`, `sw2`, `sw3`).
+
+- `ping -c 4` de `h1` (10.0.0.1) a `h2` (10.0.0.2): **4/4 recibidos, 0% de pérdida**, de punta a punta a través del pipeline completo (tablas 0→1→2→3→4).
+- Ambas MAC (`fa:16:3e:9f:b2:02`=h1, `fa:16:3e:bb:e9:aa`=h2) llegaron a R1 sin estar registradas, degradaron a rol alumno tal como especifica el HLD §3, y quedaron logueadas para auditoría.
+- Regla instalada en `sw2`, tabla 2: `priority=20000,in_port=2,dl_src=fa:16:3e:9f:b2:02 actions=write_metadata:0x11/0xff,goto_table:3` — `0x11` es exactamente `codificar_metadata(ROL_ALUMNO, ESTADO_AUTENTICADO)`, confirmando que la codificación de bits del contrato se aplica igual en código que en el switch real.
+- El mismo host se identificó de forma independiente en `sw1` y `sw3` también (el tráfico ARP de resolución cruzó esos switches) — comportamiento esperado: cada switch aplica su propia regla local, no hay un punto central de decisión por paquete.
+
+De paso se encontró y se limpió un residuo: el controlador de la Fase 5 (`bench_ataques.py`) había quedado corriendo desde el 17 de septiembre sin que nadie lo detuviera, ocupando el puerto 6653. Se detuvo antes de esta prueba.
+
 ## Qué queda fuera de este incremento (deuda declarada, no oculta)
 
 - **Northbound API REST** (`GET /r1/sesiones`, `/r1/metricas`, `/r1/roles`, `POST /r1/revocar`, del HLD §10): no implementada. `TablaDeRoles` hoy solo se puebla programáticamente. Es el siguiente incremento natural, y necesita decidir el framework HTTP (no es una decisión de arquitectura nueva, es de implementación — queda para cuando se retome).
 - **Persistencia de `sesiones`**: vive en memoria del proceso. Si el controlador se reinicia, se pierde el estado (consistente con "controlador único, sin cluster" del modelo de control del Ex1 — ver §9 del documento de arquitectura del Lab 3).
-- **Pruebas de integración contra el VNRT**: el código compila y pasa lint (`ruff check src tests`) y las 12 pruebas unitarias, pero **no se ha ejecutado todavía contra un switch real** — necesita acceso al VNRT (gateway actual sin confirmar) para la primera corrida end-to-end.
+- **Revocación reactiva** (`ataque_detectado` → sesión revocada): implementada y con lógica probada por unit test indirectamente (la codificación de metadata), pero **no probada end-to-end contra el VNRT** porque requiere que R3 exista para emitir el evento real. Queda pendiente de una prueba de integración cuando R3 esté listo.
